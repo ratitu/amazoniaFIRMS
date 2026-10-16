@@ -108,33 +108,43 @@ def generate_map(
         marker_json = json.dumps(marker_data, separators=(",", ":"))
         map_name = m.get_name()
 
+        # Folium emits `var map_xxx = L.map(...)` LAST, during render, i.e. after
+        # any element added via add_child(). Injecting here therefore always lands
+        # BEFORE the map variable exists -> ReferenceError. Defer until load.
         js_code = f"""
 <script>
 (function() {{
-    var data = {marker_json};
-    var cluster = L.markerClusterGroup({{
-        chunkedLoading: true,
-        chunkInterval: 50,
-        chunkDelay: 10,
-        maxClusterRadius: 50
-    }});
-    for (var i = 0; i < data.length; i++) {{
-        var d = data[i];
-        var marker = L.circleMarker([d[0], d[1]], {{
-            radius: 4,
-            color: '#ff4500',
-            fillColor: '#ff6600',
-            fillOpacity: 0.7,
-            weight: 1
+    function _addMarkers() {{
+        var data = {marker_json};
+        var cluster = L.markerClusterGroup({{
+            chunkedLoading: true,
+            chunkInterval: 50,
+            chunkDelay: 10,
+            maxClusterRadius: 50
         }});
-        var popup = '<b>Data:</b> ' + (d[2] || '-') +
-                   '<br><b>Hora:</b> ' + (d[3] || '-') +
-                   '<br><b>Risco de fogo:</b> ' + (d[4] || '-') +
-                   '<br><b>FRP:</b> ' + (d[5] || '-');
-        marker.bindPopup(popup);
-        cluster.addLayer(marker);
+        for (var i = 0; i < data.length; i++) {{
+            var d = data[i];
+            var marker = L.circleMarker([d[0], d[1]], {{
+                radius: 4,
+                color: '#ff4500',
+                fillColor: '#ff6600',
+                fillOpacity: 0.7,
+                weight: 1
+            }});
+            var popup = '<b>Data:</b> ' + (d[2] || '-') +
+                       '<br><b>Hora:</b> ' + (d[3] || '-') +
+                       '<br><b>Risco de fogo:</b> ' + (d[4] || '-') +
+                       '<br><b>FRP:</b> ' + (d[5] || '-');
+            marker.bindPopup(popup);
+            cluster.addLayer(marker);
+        }}
+        {map_name}.addLayer(cluster);
     }}
-    {map_name}.addLayer(cluster);
+    if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', _addMarkers);
+    }} else {{
+        _addMarkers();
+    }}
 }})();
 </script>
 """
