@@ -1,6 +1,13 @@
 name: Build and Deploy INPE Amazonia Map
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'requirements.txt'
+      - 'Limites_Amazonia_Legal_2024.geojson'
+      - '.github/workflows/deploy.yml'
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
