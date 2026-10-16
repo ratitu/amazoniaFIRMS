@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 BOUNDARY_PATH = Path("Limites_Amazonia_Legal_2024.geojson")
 INPE_CLIPPED = Path("data") / "inpe_amazonia_legal.geojson"
 OUT_HTML = Path("docs") / "index.html"
+OUT_DATA_JS = Path("docs") / "fire_data.js"
 ESRI_IMAGERY = (
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 )
@@ -71,6 +72,7 @@ def generate_map(
     boundary_path: Path = BOUNDARY_PATH,
     hotspots_path: Path = INPE_CLIPPED,
     out_html: Path = OUT_HTML,
+    out_data_js: Path | None = None,
 ) -> Path:
     bounds = geo_utils.bounds_from_geojson(boundary_path)
     folium_bounds = bounds.to_folium_bounds()
@@ -103,25 +105,33 @@ def generate_map(
         # Add MarkerCluster to include JS/CSS assets
         MarkerCluster(name="Focos de Queimadas").add_to(m)
 
-        # Extract compact marker data and inject via JavaScript
         marker_data = _extract_marker_data(features)
-        marker_json = json.dumps(marker_data, separators=(",", ":"))
         map_name = m.get_name()
+        if out_data_js is None:
+            out_data_js = out_html.with_name(OUT_DATA_JS.name)
 
-        # Folium emits `var map_xxx = L.map(...)` LAST, during render, i.e. after
-        # any element added via add_child(). Injecting here therefore always lands
-        # BEFORE the map variable exists -> ReferenceError. Defer until load.
+        out_data_js.parent.mkdir(parents=True, exist_ok=True)
+        out_data_js.write_text(
+            "window.FIRE_DATA=" + json.dumps(marker_data, separators=(",", ":")) + ";",
+            encoding="utf-8",
+        )
+
+        # The marker payload goes in a sibling file so the map can paint before
+        # it is parsed. chunkedLoading only applies to addLayers() batches,
+        # never to per-marker addLayer() calls.
         js_code = f"""
 <script>
 (function() {{
-    function _addMarkers() {{
-        var data = {marker_json};
+    var CHUNK_SIZE = 2000;
+    function render() {{
+        var data = window.FIRE_DATA || [];
         var cluster = L.markerClusterGroup({{
             chunkedLoading: true,
             chunkInterval: 50,
             chunkDelay: 10,
             maxClusterRadius: 50
         }});
+        var chunk = [];
         for (var i = 0; i < data.length; i++) {{
             var d = data[i];
             var marker = L.circleMarker([d[0], d[1]], {{
@@ -136,20 +146,34 @@ def generate_map(
                        '<br><b>Risco de fogo:</b> ' + (d[4] || '-') +
                        '<br><b>FRP:</b> ' + (d[5] || '-');
             marker.bindPopup(popup);
-            cluster.addLayer(marker);
+            chunk.push(marker);
+            if (chunk.length >= CHUNK_SIZE) {{
+                cluster.addLayers(chunk);
+                chunk = [];
+            }}
+        }}
+        if (chunk.length) {{
+            cluster.addLayers(chunk);
         }}
         {map_name}.addLayer(cluster);
     }}
-    if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', _addMarkers);
-    }} else {{
-        _addMarkers();
-    }}
+    var s = document.createElement('script');
+    s.src = '{out_data_js.name}';
+    s.onload = function() {{
+        if (document.readyState === 'loading') {{
+            document.addEventListener('DOMContentLoaded', render);
+        }} else {{
+            render();
+        }}
+    }};
+    document.head.appendChild(s);
 }})();
 </script>
 """
         m.get_root().html.add_child(folium.Element(js_code))
-        log.info("Injetados %d marcadores via JavaScript", len(marker_data))
+        log.info(
+            "Marcadores: %d em %s (payload separado)", len(marker_data), out_data_js
+        )
     else:
         log.warning("Nenhum hotspot encontrado em %s", hotspots_path)
 
