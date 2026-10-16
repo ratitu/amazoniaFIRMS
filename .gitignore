@@ -1,0 +1,23 @@
+FIRMS_API_KEY
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.omo/
+.coverage
+htmlcov/
+data/
+docs/
+
+# Kept on disk, not deployed: not reachable from the GitHub Pages workflow.
+# Remove these lines to start tracking them again.
+tests/
+src/build_map.py
+src/firms_fetch.py
+README.md
+
+.env
+*.tmp
+*.log
